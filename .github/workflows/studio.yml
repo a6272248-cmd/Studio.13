@@ -1,1 +1,70 @@
+name: Smart Photo Studio - Auto Build and Deploy
 
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Smart-Photo-Studio-PRO-V3-PWA.zip'
+      - '.github/workflows/deploy-studio.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get repository files
+        uses: actions/checkout@v4
+      - name: Extract studio package and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Smart-Photo-Studio-PRO-V3-PWA.zip || { echo 'ERROR: Upload Smart-Photo-Studio-PRO-V3-PWA.zip to repository root'; exit 1; }
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          archive=Path('Smart-Photo-Studio-PRO-V3-PWA.zip')
+          target=Path('site')
+          target.mkdir(exist_ok=True)
+          with ZipFile(archive) as z:
+              names=z.namelist()
+              if any(n.startswith('/') or '..' in Path(n).parts for n in names):
+                  raise SystemExit('Unsafe archive path')
+              for member in z.infolist():
+                  if member.is_dir():
+                      continue
+                  out=target / member.filename
+                  out.parent.mkdir(parents=True,exist_ok=True)
+                  out.write_bytes(z.read(member))
+          required=['index.html','manifest.webmanifest','sw.js','icon.svg']
+          for filename in required:
+              f=target / filename
+              if not f.is_file() or f.stat().st_size == 0:
+                  raise SystemExit(f'Missing file: {filename}')
+          (target/'.nojekyll').write_text('')
+          print('Studio V3 extracted and validated: ready to deploy.')
+          PY
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
